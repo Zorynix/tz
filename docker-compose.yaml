@@ -1,0 +1,57 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: subscriptions
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  migrate:
+    image: ghcr.io/kukymbr/goose-docker:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - GOOSE_DRIVER=postgres
+      - GOOSE_DBSTRING=host=postgres port=5432 user=postgres password=postgres dbname=subscriptions sslmode=disable
+      - GOOSE_COMMAND=up
+    volumes:
+      - ./migrations:/migrations
+    networks:
+      - app-network
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment:
+      - CONFIG_PATH=/app/config.docker.yaml
+    volumes:
+      - ./config.docker.yaml:/app/config.docker.yaml
+    networks:
+      - app-network
+
+volumes:
+  postgres_data:
+
+networks:
+  app-network:
+    driver: bridge
