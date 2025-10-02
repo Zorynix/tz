@@ -45,6 +45,11 @@ func (s *subscriptionService) Create(ctx context.Context, req *domain.CreateSubs
 			s.logger.Error("invalid end date format", zap.String("end_date", *req.EndDate), zap.Error(err))
 			return nil, err
 		}
+
+		if *req.EndDate < req.StartDate {
+			s.logger.Error("end date must be after start date")
+			return nil, errors.New("end date must be after start date")
+		}
 	}
 
 	return s.repo.Create(ctx, req)
@@ -57,6 +62,12 @@ func (s *subscriptionService) GetByID(ctx context.Context, id uuid.UUID) (*domai
 
 func (s *subscriptionService) Update(ctx context.Context, id uuid.UUID, req *domain.UpdateSubscriptionRequest) (*domain.Subscription, error) {
 	s.logger.Info("service: updating subscription", zap.String("id", id.String()))
+
+	_, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		s.logger.Error("subscription not found", zap.String("id", id.String()), zap.Error(err))
+		return nil, errors.New("subscription not found")
+	}
 
 	if req.StartDate != nil {
 		if err := s.validateDateFormat(*req.StartDate); err != nil {
@@ -77,6 +88,13 @@ func (s *subscriptionService) Update(ctx context.Context, id uuid.UUID, req *dom
 
 func (s *subscriptionService) Delete(ctx context.Context, id uuid.UUID) error {
 	s.logger.Info("service: deleting subscription", zap.String("id", id.String()))
+
+	_, err := s.repo.GetByID(ctx, id)
+	if err != nil {
+		s.logger.Error("subscription not found", zap.String("id", id.String()), zap.Error(err))
+		return errors.New("subscription not found")
+	}
+
 	return s.repo.Delete(ctx, id)
 }
 
@@ -145,15 +163,20 @@ func (s *subscriptionService) CalculateTotalCost(ctx context.Context, req *domai
 }
 
 func (s *subscriptionService) validateDateFormat(date string) error {
-	if len(date) != 7 || date[2] != '-' {
-		return errors.New("date must be in MM-YYYY format")
+	if len(date) != 10 {
+		return errors.New("date must be in YYYY-MM-DD format")
 	}
 
-	month := date[:2]
-	year := date[3:]
+	if date[4] != '-' || date[7] != '-' {
+		return errors.New("date must be in YYYY-MM-DD format")
+	}
 
-	if len(month) != 2 || len(year) != 4 {
-		return errors.New("date must be in MM-YYYY format")
+	year := date[:4]
+	month := date[5:7]
+	day := date[8:]
+
+	if len(year) != 4 || len(month) != 2 || len(day) != 2 {
+		return errors.New("date must be in YYYY-MM-DD format")
 	}
 
 	return nil

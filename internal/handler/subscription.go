@@ -65,6 +65,7 @@ func (h *SubscriptionHandler) CreateSubscription(c *gin.Context) {
 // @Success 200 {object} domain.Subscription
 // @Failure 400 {object} map[string]interface{}
 // @Failure 404 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
 // @Router /subscriptions/{id} [get]
 func (h *SubscriptionHandler) GetSubscription(c *gin.Context) {
 	h.logger.Info("handler: get subscription request")
@@ -99,6 +100,7 @@ func (h *SubscriptionHandler) GetSubscription(c *gin.Context) {
 // @Success 200 {object} domain.Subscription
 // @Failure 400 {object} map[string]interface{}
 // @Failure 404 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
 // @Router /subscriptions/{id} [put]
 func (h *SubscriptionHandler) UpdateSubscription(c *gin.Context) {
 	h.logger.Info("handler: update subscription request")
@@ -121,7 +123,11 @@ func (h *SubscriptionHandler) UpdateSubscription(c *gin.Context) {
 	subscription, err := h.service.Update(c.Request.Context(), id, &req)
 	if err != nil {
 		h.logger.Error("failed to update subscription", zap.String("id", id.String()), zap.Error(err))
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		if err.Error() == "subscription not found" {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
 		return
 	}
 
@@ -139,6 +145,7 @@ func (h *SubscriptionHandler) UpdateSubscription(c *gin.Context) {
 // @Success 204
 // @Failure 400 {object} map[string]interface{}
 // @Failure 404 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
 // @Router /subscriptions/{id} [delete]
 func (h *SubscriptionHandler) DeleteSubscription(c *gin.Context) {
 	h.logger.Info("handler: delete subscription request")
@@ -153,7 +160,11 @@ func (h *SubscriptionHandler) DeleteSubscription(c *gin.Context) {
 
 	if err := h.service.Delete(c.Request.Context(), id); err != nil {
 		h.logger.Error("failed to delete subscription", zap.String("id", id.String()), zap.Error(err))
-		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		if err.Error() == "subscription not found" {
+			c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
 		return
 	}
 
@@ -173,6 +184,7 @@ func (h *SubscriptionHandler) DeleteSubscription(c *gin.Context) {
 // @Param offset query int false "Offset" default(0)
 // @Success 200 {object} map[string]interface{}
 // @Failure 400 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
 // @Router /subscriptions [get]
 func (h *SubscriptionHandler) ListSubscriptions(c *gin.Context) {
 	h.logger.Info("handler: list subscriptions request")
@@ -202,16 +214,17 @@ func (h *SubscriptionHandler) ListSubscriptions(c *gin.Context) {
 
 // CalculateTotalCost godoc
 // @Summary Calculate total cost
-// @Description Calculate total cost of subscriptions for a period
+// @Description Calculate total cost of subscriptions for a period (considers overlapping periods and number of months)
 // @Tags subscriptions
 // @Accept json
 // @Produce json
 // @Param user_id query string false "User ID filter"
 // @Param service_name query string false "Service name filter"
-// @Param start_date query string true "Start date (MM-YYYY)"
-// @Param end_date query string true "End date (MM-YYYY)"
+// @Param start_date query string true "Start date (YYYY-MM-DD)"
+// @Param end_date query string true "End date (YYYY-MM-DD)"
 // @Success 200 {object} domain.TotalCostResponse
 // @Failure 400 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
 // @Router /subscriptions/total-cost [get]
 func (h *SubscriptionHandler) CalculateTotalCost(c *gin.Context) {
 	h.logger.Info("handler: calculate total cost request")
@@ -226,7 +239,11 @@ func (h *SubscriptionHandler) CalculateTotalCost(c *gin.Context) {
 	result, err := h.service.CalculateTotalCost(c.Request.Context(), &req)
 	if err != nil {
 		h.logger.Error("failed to calculate total cost", zap.Error(err))
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		if err.Error() == "date must be in YYYY-MM-DD format" || err.Error() == "invalid user_id format" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
 		return
 	}
 

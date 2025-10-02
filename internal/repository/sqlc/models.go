@@ -13,8 +13,8 @@ type Subscription struct {
 	ServiceName string
 	Price       int32
 	UserID      pgtype.UUID
-	StartDate   string
-	EndDate     pgtype.Text
+	StartDate   pgtype.Date
+	EndDate     pgtype.Date
 	CreatedAt   pgtype.Timestamptz
 	UpdatedAt   pgtype.Timestamptz
 }

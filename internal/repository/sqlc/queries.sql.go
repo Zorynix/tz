@@ -12,27 +12,41 @@ import (
 )
 
 const calculateTotalCost = `-- name: CalculateTotalCost :one
-SELECT COALESCE(SUM(price), 0)::BIGINT as total_cost FROM subscriptions
-WHERE 
-    ($1::UUID IS NULL OR user_id = $1) AND
-    ($2::VARCHAR IS NULL OR service_name ILIKE '%' || $2 || '%') AND
-    (start_date <= $4) AND
-    (end_date IS NULL OR end_date >= $3)
+WITH date_range AS (
+    SELECT 
+        generate_series($1::DATE, $2::DATE, '1 month'::interval)::DATE AS month_start
+),
+subscription_costs AS (
+    SELECT 
+        s.id as subscription_id,
+        s.price,
+        COUNT(DISTINCT dr.month_start) as months_count
+    FROM subscriptions s
+    CROSS JOIN date_range dr
+    WHERE 
+        ($3::UUID IS NULL OR s.user_id = $3) AND
+        ($4::VARCHAR IS NULL OR s.service_name ILIKE '%' || $4 || '%') AND
+        (s.start_date <= dr.month_start) AND
+        (s.end_date IS NULL OR s.end_date >= dr.month_start)
+    GROUP BY s.id, s.price
+)
+SELECT COALESCE(SUM(price * months_count), 0)::BIGINT as total_cost
+FROM subscription_costs
 `
 
 type CalculateTotalCostParams struct {
-	Column1   pgtype.UUID
-	Column2   string
-	EndDate   pgtype.Text
-	StartDate string
+	StartDate   pgtype.Date
+	EndDate     pgtype.Date
+	UserID      pgtype.UUID
+	ServiceName pgtype.Text
 }
 
 func (q *Queries) CalculateTotalCost(ctx context.Context, arg CalculateTotalCostParams) (int64, error) {
 	row := q.db.QueryRow(ctx, calculateTotalCost,
-		arg.Column1,
-		arg.Column2,
-		arg.EndDate,
 		arg.StartDate,
+		arg.EndDate,
+		arg.UserID,
+		arg.ServiceName,
 	)
 	var total_cost int64
 	err := row.Scan(&total_cost)
@@ -47,12 +61,12 @@ WHERE
 `
 
 type CountSubscriptionsParams struct {
-	Column1 pgtype.UUID
-	Column2 string
+	UserID      pgtype.UUID
+	ServiceName pgtype.Text
 }
 
 func (q *Queries) CountSubscriptions(ctx context.Context, arg CountSubscriptionsParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countSubscriptions, arg.Column1, arg.Column2)
+	row := q.db.QueryRow(ctx, countSubscriptions, arg.UserID, arg.ServiceName)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -68,8 +82,8 @@ type CreateSubscriptionParams struct {
 	ServiceName string
 	Price       int32
 	UserID      pgtype.UUID
-	StartDate   string
-	EndDate     pgtype.Text
+	StartDate   pgtype.Date
+	EndDate     pgtype.Date
 }
 
 func (q *Queries) CreateSubscription(ctx context.Context, arg CreateSubscriptionParams) (Subscription, error) {
@@ -94,13 +108,16 @@ func (q *Queries) CreateSubscription(ctx context.Context, arg CreateSubscription
 	return i, err
 }
 
-const deleteSubscription = `-- name: DeleteSubscription :exec
+const deleteSubscription = `-- name: DeleteSubscription :execrows
 DELETE FROM subscriptions WHERE id = $1
 `
 
-func (q *Queries) DeleteSubscription(ctx context.Context, id pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, deleteSubscription, id)
-	return err
+func (q *Queries) DeleteSubscription(ctx context.Context, id pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteSubscription, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const getSubscription = `-- name: GetSubscription :one
@@ -129,22 +146,22 @@ WHERE
     ($1::UUID IS NULL OR user_id = $1) AND
     ($2::VARCHAR IS NULL OR service_name ILIKE '%' || $2 || '%')
 ORDER BY created_at DESC
-LIMIT $3 OFFSET $4
+LIMIT $4 OFFSET $3
 `
 
 type ListSubscriptionsParams struct {
-	Column1 pgtype.UUID
-	Column2 string
-	Limit   int32
-	Offset  int32
+	UserID      pgtype.UUID
+	ServiceName pgtype.Text
+	Offset      int32
+	Limit       int32
 }
 
 func (q *Queries) ListSubscriptions(ctx context.Context, arg ListSubscriptionsParams) ([]Subscription, error) {
 	rows, err := q.db.Query(ctx, listSubscriptions,
-		arg.Column1,
-		arg.Column2,
-		arg.Limit,
+		arg.UserID,
+		arg.ServiceName,
 		arg.Offset,
+		arg.Limit,
 	)
 	if err != nil {
 		return nil, err
@@ -189,8 +206,8 @@ type UpdateSubscriptionParams struct {
 	ID          pgtype.UUID
 	ServiceName string
 	Price       int32
-	StartDate   string
-	EndDate     pgtype.Text
+	StartDate   pgtype.Date
+	EndDate     pgtype.Date
 }
 
 func (q *Queries) UpdateSubscription(ctx context.Context, arg UpdateSubscriptionParams) (Subscription, error) {

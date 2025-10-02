@@ -58,16 +58,25 @@ func (r *subscriptionRepository) Create(ctx context.Context, req *domain.CreateS
 		return nil, err
 	}
 
-	var endDate pgtype.Text
+	startDate := pgtype.Date{}
+	if err := startDate.Scan(req.StartDate); err != nil {
+		r.logger.Error("failed to parse start date", zap.Error(err))
+		return nil, err
+	}
+
+	endDate := pgtype.Date{}
 	if req.EndDate != nil {
-		endDate = pgtype.Text{String: *req.EndDate, Valid: true}
+		if err := endDate.Scan(*req.EndDate); err != nil {
+			r.logger.Error("failed to parse end date", zap.Error(err))
+			return nil, err
+		}
 	}
 
 	params := sqlc.CreateSubscriptionParams{
 		ServiceName: req.ServiceName,
 		Price:       int32(req.Price),
 		UserID:      userIDPgtype,
-		StartDate:   req.StartDate,
+		StartDate:   startDate,
 		EndDate:     endDate,
 	}
 
@@ -126,12 +135,22 @@ func (r *subscriptionRepository) Update(ctx context.Context, id uuid.UUID, req *
 
 	startDate := current.StartDate
 	if req.StartDate != nil {
-		startDate = *req.StartDate
+		newStartDate := pgtype.Date{}
+		if err := newStartDate.Scan(*req.StartDate); err != nil {
+			r.logger.Error("failed to parse start date", zap.Error(err))
+			return nil, err
+		}
+		startDate = newStartDate
 	}
 
 	endDate := current.EndDate
 	if req.EndDate != nil {
-		endDate = pgtype.Text{String: *req.EndDate, Valid: true}
+		newEndDate := pgtype.Date{}
+		if err := newEndDate.Scan(*req.EndDate); err != nil {
+			r.logger.Error("failed to parse end date", zap.Error(err))
+			return nil, err
+		}
+		endDate = newEndDate
 	}
 
 	params := sqlc.UpdateSubscriptionParams{
@@ -161,9 +180,15 @@ func (r *subscriptionRepository) Delete(ctx context.Context, id uuid.UUID) error
 		return err
 	}
 
-	if err := r.queries.DeleteSubscription(ctx, idPgtype); err != nil {
+	rowsAffected, err := r.queries.DeleteSubscription(ctx, idPgtype)
+	if err != nil {
 		r.logger.Error("failed to delete subscription", zap.String("id", id.String()), zap.Error(err))
 		return err
+	}
+
+	if rowsAffected == 0 {
+		r.logger.Warn("subscription not found for deletion", zap.String("id", id.String()))
+		return nil
 	}
 
 	r.logger.Info("subscription deleted successfully", zap.String("id", id.String()))
@@ -189,10 +214,10 @@ func (r *subscriptionRepository) List(ctx context.Context, filter *ListSubscript
 	}
 
 	listParams := sqlc.ListSubscriptionsParams{
-		Column1: userID,
-		Column2: serviceName,
-		Limit:   int32(filter.Limit),
-		Offset:  int32(filter.Offset),
+		UserID:      userID,
+		ServiceName: pgtype.Text{String: serviceName, Valid: serviceName != ""},
+		Limit:       int32(filter.Limit),
+		Offset:      int32(filter.Offset),
 	}
 
 	subs, err := r.queries.ListSubscriptions(ctx, listParams)
@@ -202,8 +227,8 @@ func (r *subscriptionRepository) List(ctx context.Context, filter *ListSubscript
 	}
 
 	countParams := sqlc.CountSubscriptionsParams{
-		Column1: userID,
-		Column2: serviceName,
+		UserID:      userID,
+		ServiceName: pgtype.Text{String: serviceName, Valid: serviceName != ""},
 	}
 
 	count, err := r.queries.CountSubscriptions(ctx, countParams)
@@ -239,11 +264,23 @@ func (r *subscriptionRepository) CalculateTotalCost(ctx context.Context, filter 
 		serviceName = *filter.ServiceName
 	}
 
+	startDate := pgtype.Date{}
+	if err := startDate.Scan(filter.StartDate); err != nil {
+		r.logger.Error("failed to parse start date", zap.Error(err))
+		return 0, err
+	}
+
+	endDate := pgtype.Date{}
+	if err := endDate.Scan(filter.EndDate); err != nil {
+		r.logger.Error("failed to parse end date", zap.Error(err))
+		return 0, err
+	}
+
 	params := sqlc.CalculateTotalCostParams{
-		Column1:   userID,
-		Column2:   serviceName,
-		EndDate:   pgtype.Text{String: filter.StartDate, Valid: true},
-		StartDate: filter.EndDate,
+		UserID:      userID,
+		ServiceName: pgtype.Text{String: serviceName, Valid: serviceName != ""},
+		StartDate:   startDate,
+		EndDate:     endDate,
 	}
 
 	totalCost, err := r.queries.CalculateTotalCost(ctx, params)
@@ -268,16 +305,22 @@ func (r *subscriptionRepository) convertToSubscription(sub *sqlc.Subscription) *
 		copy(id[:], sub.ID.Bytes[:])
 	}
 
+	startDateStr := ""
+	if sub.StartDate.Valid {
+		startDateStr = sub.StartDate.Time.Format("2006-01-02")
+	}
+
 	result := &domain.Subscription{
 		ID:          id,
 		ServiceName: sub.ServiceName,
 		Price:       int(sub.Price),
 		UserID:      userID,
-		StartDate:   sub.StartDate,
+		StartDate:   startDateStr,
 	}
 
 	if sub.EndDate.Valid {
-		result.EndDate = &sub.EndDate.String
+		endDateStr := sub.EndDate.Time.Format("2006-01-02")
+		result.EndDate = &endDateStr
 	}
 
 	if sub.CreatedAt.Valid {
